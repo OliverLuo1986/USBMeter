@@ -9,6 +9,7 @@
 #include "udp_debug.h"
 
 
+
 #define LCD_BL      26
 
 TFT_eSPI tft = TFT_eSPI(); /* TFT instance */
@@ -28,7 +29,9 @@ volatile uint64_t sumBusMillVolts = 0;          ///< Sum of bus voltage readings
 volatile int64_t  sumBusMicroAmps = 0;          ///< Sum of bus amperage readings
 volatile uint8_t  readings        = 0;          ///< Number of measurements taken
 volatile int64_t  mAH = 0;
-
+volatile double  wH = 0;
+uint8_t rotate = 3;
+bool touch = 0;
 bool power_on = 0;
 
 lv_obj_t * label1;
@@ -61,46 +64,87 @@ void ina266_task()
   char tmp[64];
   static long lastMillis = millis();  // Store the last time we printed something
   volatile uint64_t vol,cur, wat;
-  double v,a,w;
-  
-  if((millis() - lastMillis) >= 500 )
+  double v,a,w,wh;
+  long ms;
+
+
+ 
   {
-    vol = INA.getBusMilliVolts(deviceNumber);
-    cur = INA.getBusMicroAmps(deviceNumber)/1000;
-    wat = INA.getBusMicroWatts(deviceNumber);
-    lastMillis = millis();
+    ms = millis();
+    if((ms - lastMillis) >= 200 )
+    {
+      vol = INA.getBusMilliVolts(deviceNumber);
+      cur = INA.getBusMicroAmps(deviceNumber)/1000;
+      wat = INA.getBusMicroWatts(deviceNumber);
+      ms = ms - lastMillis;
+      lastMillis = millis();
+  
+      if(cur > 20*1000)
+        cur = 0;
+  
+      v = vol / 1000.0;
+      if(v>10)
+        sprintf(tmp,"#00FFFF %0.2f",v);
+      else
+        sprintf(tmp,"#00FFFF %0.3f",v);
+      lv_label_set_text(label1,tmp);
+  
+      a = cur/1000.0;
+      if(a > 10)
+        sprintf(tmp,"#0000FF %0.2f",a);
+      else
+        sprintf(tmp,"#0000FF %0.3f",a);
+      lv_label_set_text(label2,tmp);
+  
+      w = v*a;
+      if(w>10)
+        sprintf(tmp,"#FF0000 %0.2f",w);
+      else 
+        sprintf(tmp,"#FF0000 %0.3f",w); 
+      lv_label_set_text(label3,tmp);
 
-    if(cur > 20*1000)
-      cur = 0;
+      
+      wH += w*ms;
+      sprintf(tmp,"#00FF00 %0.3f", wH/(60*60*1000));
+      lv_label_set_text(label4,tmp);
+  
+      sprintf(tmp,"vol:%0.3fV cur:%dmA, power:%0.3fW %dwh\n", v, a, w,wH/(60*60));
+      //Serial.print(tmp);
 
-    v = vol / 1000.0;
-    if(v>10)
-      sprintf(tmp,"#00FFFF %0.2f",v);
-    else
-      sprintf(tmp,"#00FFFF %0.3f",v);
-    lv_label_set_text(label1,tmp);
+  //Serial.println(touchRead(T8));
+  
+      //if(touch == 0)
+      {
+        if(touchRead(T8)<35)  // get value using T8
+        {
+          //touch++;
+          if(touch == 0)
+          {
+            touch = 1;
+            if(rotate == 3)
+              rotate = 1;
+            else
+              rotate = 3;
+    
+            tft.fillScreen(TFT_BLACK);  
+            tft.setRotation(rotate);
+            //Serial.print(rotate);
+          }
+        }
+        else
+        {
+          touch = 0;   
+        }
+      }
+         
+    } 
+  }
+}
 
-    a = cur/1000.0;
-    if(a > 10)
-      sprintf(tmp,"#0000FF %0.2f",a);
-    else
-      sprintf(tmp,"#0000FF %0.3f",a);
-    lv_label_set_text(label2,tmp);
 
-    w = v*a;
-    if(w>10)
-      sprintf(tmp,"#FF0000 %0.2f",w);
-    else 
-      sprintf(tmp,"#FF0000 %0.3f",w); 
-    lv_label_set_text(label3,tmp);
-
-    mAH += cur;
-    sprintf(tmp,"#00FF00 %0.3f", mAH/(60*60)/1000.0);
-    lv_label_set_text(label4,tmp);
-
-    sprintf(tmp,"vol:%0.3fV cur:%dmA, power:%0.3fW %dmah\n", v, a, w,mAH/(60*60)/1000.0);
-    Serial.print(tmp);
-  }  
+void lvgl_task(void *)
+{
+  lv_task_handler();
 }
 
 
@@ -139,8 +183,11 @@ void setup()
 {
 	Serial.begin(115200); /* prepare for possible serial debug */
 
-  pinMode(LCD_BL, OUTPUT);
-  digitalWrite(LCD_BL,HIGH);  
+  //pinMode(LCD_BL, OUTPUT);
+  //digitalWrite(LCD_BL,HIGH);  
+
+  //pinMode(27, OUTPUT);
+  //digitalWrite(27,LOW);    
 
 	lv_init();
 
@@ -239,10 +286,10 @@ void setup()
   // 容量mah
   label_mah = lv_label_create(lv_scr_act(), NULL);
   lv_label_set_recolor(label_mah, true);
-  lv_label_set_text(label_mah,"#00FF00 Ah");
+  lv_label_set_text(label_mah,"#00FF00 Wh");
   lv_obj_set_pos(label_mah, 100, 64);  
 
-  digitalWrite(LCD_BL,LOW);   
+  //digitalWrite(LCD_BL,LOW);   
   
   Wire.begin();
   uint8_t devicesFound = 0;
@@ -275,7 +322,26 @@ void setup()
   INA.setShuntConversion(8244, deviceNumber);           // Maximum conversion time 8.244ms
   INA.setMode(INA_MODE_CONTINUOUS_BOTH, deviceNumber);  // Bus/shunt measured continuously
 
-  ticker1.attach(1, ina266_task);
+  //ticker1.attach(1, ina266_task);
+/*
+ xTaskCreatePinnedToCore(
+    ina266_task
+    ,  "ina266_task"   
+    ,  1024  
+    ,  NULL
+    ,  2  // 任务优先级, with 3 (csonfigMAX_PRIORITIES - 1) 是最高的，0是最低的.
+    ,  NULL 
+    ,  ARDUINO_RUNNING_CORE);
+
+ xTaskCreatePinnedToCore(
+    lvgl_task
+    ,  "lvgl_task"   
+    ,  1024  
+    ,  NULL
+    ,  2  // 任务优先级, with 3 (csonfigMAX_PRIORITIES - 1) 是最高的，0是最低的.
+    ,  NULL 
+    ,  ARDUINO_RUNNING_CORE);
+  */  
 }
 
 
@@ -284,7 +350,6 @@ void loop()
 {
 	lv_task_handler(); /* let the GUI do its work */
 
-  //ina266_task();
-  
-	delay(5);
+  ina266_task();
+	//delay(5);
 }
