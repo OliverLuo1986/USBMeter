@@ -1,12 +1,10 @@
 #include <lvgl.h>
 #include <TFT_eSPI.h>
-#include <lv_examples/lv_examples.h>
 #include <Wire.h>
-#include <Bounce2.h>
 #include <INA.h>
 #include <SPI.h>
 #include <Ticker.h>
-#include "udp_debug.h"
+
 
 
 
@@ -15,15 +13,10 @@
 TFT_eSPI tft = TFT_eSPI(); /* TFT instance */
 static lv_disp_buf_t disp_buf;
 static lv_color_t buf[LV_HOR_RES_MAX * 10];
-
-
-
 INA_Class         INA; 
 
 
-
 int8_t request_index=0;
-
 volatile uint8_t  deviceNumber    = UINT8_MAX;  ///< Device Number to use in example
 volatile uint64_t sumBusMillVolts = 0;          ///< Sum of bus voltage readings
 volatile int64_t  sumBusMicroAmps = 0;          ///< Sum of bus amperage readings
@@ -44,7 +37,7 @@ lv_obj_t * label_a;
 lv_obj_t * label_w;
 lv_obj_t * label_mah;
 
-Ticker ticker1;
+Ticker touch_ticker;
 
 
 void ina226_read() {
@@ -66,9 +59,8 @@ void ina266_task()
   volatile uint64_t vol,cur, wat;
   double v,a,w,wh;
   long ms;
+  static int i=0;
 
-
- 
   {
     ms = millis();
     if((ms - lastMillis) >= 200 )
@@ -109,67 +101,33 @@ void ina266_task()
       lv_label_set_text(label4,tmp);
   
       sprintf(tmp,"vol:%0.3fV cur:%dmA, power:%0.3fW %dwh\n", v, a, w,wH/(60*60));
-      //Serial.print(tmp);
-
-  //Serial.println(touchRead(T8));
-  
-      //if(touch == 0)
-      {
-        if(touchRead(T8)<35)  // get value using T8
-        {
-          //touch++;
-          if(touch == 0)
-          {
-            touch = 1;
-            if(rotate == 3)
-              rotate = 1;
-            else
-              rotate = 3;
-    
-            tft.fillScreen(TFT_BLACK);  
-            tft.setRotation(rotate);
-            //Serial.print(rotate);
-          }
-        }
-        else
-        {
-          touch = 0;   
-        }
-      }
-         
+      Serial.print(tmp);        
     } 
   }
 }
-
-
-void lvgl_task(void *)
-{
-  lv_task_handler();
-}
-
 
 
 #if LV_USE_LOG != 0
 /* Serial debugging */
 void my_print(lv_log_level_t level, const char* file, uint32_t line, const char* fun, const char* dsc)
 {
-	Serial.printf("%s@%d %s->%s\r\n", file, line, fun, dsc);
-	Serial.flush();
+  Serial.printf("%s@%d %s->%s\r\n", file, line, fun, dsc);
+  Serial.flush();
 }
 #endif
 
 /* Display flushing */
 void my_disp_flush(lv_disp_drv_t* disp, const lv_area_t* area, lv_color_t* color_p)
 {
-	uint32_t w = (area->x2 - area->x1 + 1);
-	uint32_t h = (area->y2 - area->y1 + 1);
+  uint32_t w = (area->x2 - area->x1 + 1);
+  uint32_t h = (area->y2 - area->y1 + 1);
 
-	tft.startWrite();
-	tft.setAddrWindow(area->x1, area->y1, w, h);
-	tft.pushColors(&color_p->full, w * h, true);
-	tft.endWrite();
+  tft.startWrite();
+  tft.setAddrWindow(area->x1, area->y1, w, h);
+  tft.pushColors(&color_p->full, w * h, true);
+  tft.endWrite();
 
-	lv_disp_flush_ready(disp);
+  lv_disp_flush_ready(disp);
 }
 
 static void list_event_handler(lv_obj_t * obj, lv_event_t event)
@@ -179,35 +137,53 @@ static void list_event_handler(lv_obj_t * obj, lv_event_t event)
   }
 }
 
+void touch_task()
+{
+  static int i=0;
+  
+  if(touchRead(T8)<35)  // get value using T8
+  {
+    i++;
+    if(i == 5)
+    {
+      if(rotate == 3)
+        rotate = 1;
+      else
+        rotate = 3;
+
+      tft.fillScreen(TFT_BLACK);  
+      tft.setRotation(rotate);
+    }
+  }
+  else
+  {
+    i=0;
+  }
+}
+
 void setup()
 {
-	Serial.begin(115200); /* prepare for possible serial debug */
-
-  //pinMode(LCD_BL, OUTPUT);
-  //digitalWrite(LCD_BL,HIGH);  
-
-  //pinMode(27, OUTPUT);
-  //digitalWrite(27,LOW);    
-
-	lv_init();
+  Serial.begin(115200); /* prepare for possible serial debug */
+  
+  lv_init();
 
 #if LV_USE_LOG != 0
-	lv_log_register_print_cb(my_print); /* register print function for debugging */
+  lv_log_register_print_cb(my_print); /* register print function for debugging */
 #endif
 
-	tft.begin(); /* TFT init */
-	tft.setRotation(3); /* mirror */
+  tft.begin(); /* TFT init */
+  tft.setRotation(3); /* mirror */
 
-	lv_disp_buf_init(&disp_buf, buf, NULL, LV_HOR_RES_MAX * 10);
+  lv_disp_buf_init(&disp_buf, buf, NULL, LV_HOR_RES_MAX * 10);
 
-	/*Initialize the display*/
-	lv_disp_drv_t disp_drv;
-	lv_disp_drv_init(&disp_drv);
-	disp_drv.hor_res = 160;
-	disp_drv.ver_res = 80;
-	disp_drv.flush_cb = my_disp_flush;
-	disp_drv.buffer = &disp_buf;
-	lv_disp_drv_register(&disp_drv);
+  /*Initialize the display*/
+  lv_disp_drv_t disp_drv;
+  lv_disp_drv_init(&disp_drv);
+  disp_drv.hor_res = 160;
+  disp_drv.ver_res = 80;
+  disp_drv.flush_cb = my_disp_flush;
+  disp_drv.buffer = &disp_buf;
+  lv_disp_drv_register(&disp_drv);
 
   lv_obj_t* bgk;
   bgk = lv_obj_create(lv_scr_act(), NULL);//创建对象
@@ -287,9 +263,10 @@ void setup()
   label_mah = lv_label_create(lv_scr_act(), NULL);
   lv_label_set_recolor(label_mah, true);
   lv_label_set_text(label_mah,"#00FF00 Wh");
-  lv_obj_set_pos(label_mah, 100, 64);  
+  lv_obj_set_pos(label_mah, 100, 64);    
 
-  //digitalWrite(LCD_BL,LOW);   
+  pinMode(LCD_BL, OUTPUT);
+  digitalWrite(LCD_BL,LOW);   
   
   Wire.begin();
   uint8_t devicesFound = 0;
@@ -322,34 +299,14 @@ void setup()
   INA.setShuntConversion(8244, deviceNumber);           // Maximum conversion time 8.244ms
   INA.setMode(INA_MODE_CONTINUOUS_BOTH, deviceNumber);  // Bus/shunt measured continuously
 
-  //ticker1.attach(1, ina266_task);
-/*
- xTaskCreatePinnedToCore(
-    ina266_task
-    ,  "ina266_task"   
-    ,  1024  
-    ,  NULL
-    ,  2  // 任务优先级, with 3 (csonfigMAX_PRIORITIES - 1) 是最高的，0是最低的.
-    ,  NULL 
-    ,  ARDUINO_RUNNING_CORE);
-
- xTaskCreatePinnedToCore(
-    lvgl_task
-    ,  "lvgl_task"   
-    ,  1024  
-    ,  NULL
-    ,  2  // 任务优先级, with 3 (csonfigMAX_PRIORITIES - 1) 是最高的，0是最低的.
-    ,  NULL 
-    ,  ARDUINO_RUNNING_CORE);
-  */  
+  touch_ticker.attach_ms(200, touch_task); 
 }
 
 
 
 void loop()
 {
-	lv_task_handler(); /* let the GUI do its work */
-
+  lv_task_handler(); /* let the GUI do its work */
   ina266_task();
-	//delay(5);
+  delay(5);
 }
